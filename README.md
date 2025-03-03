@@ -3,7 +3,7 @@
 #### **Vefútgáfa (HTML)**  
 - **Fullbúin útgáfa**: Leikurinn er tilbúinn og hægt er að spila hann í vafra.  
 - **Stjórnun með myndavél**: Notandi stjórnar hendi með því að nota myndavél.  
-- **Spila**: [Tengill á vefleikinn]  
+- **Spila**: [Tengill á vefleikinn](https://nxtxe.github.io/VerkefniGAME/web/)  
 
 #### **Unity útgáfa**  
 - **Tilraunaútgáfa**: Enn í þróun og ekki fullbúin.  
