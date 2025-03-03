@@ -1,1 +1,564 @@
 
+<!DOCTYPE html>
+<html lang="is">
+<head>
+  <meta charset="UTF-8">
+  <title>Gravity Room – Uppfærð útgáfa</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #f0f0f0;
+      font-family: Arial, sans-serif;
+      height: 100%;
+    }
+    #game {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+      background: #222;
+    }
+    #instructions {
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255,255,255,0.9);
+      padding: 10px 20px;
+      border-radius: 4px;
+      font-size: 18px;
+      z-index: 1500;
+    }
+    #webcamContainer {
+      position: fixed;
+      top: 60px;
+      left: 10px;
+      width: 200px;
+      border: 2px solid #fff;
+      z-index: 1000;
+    }
+    #webcam,
+    #output_canvas {
+      width: 100%;
+      height: auto;
+      display: block;
+      transform: scaleX(-1);
+    }
+    #zoneOverlay {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 50%;
+      pointer-events: none;
+      transform: scaleX(1);
+    }
+    .zone {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      opacity: 0.3;
+      color: rgb(0, 0, 0);
+      font-weight: bold;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      pointer-events: none;
+      font-size: 16px;
+    }
+    .left-zone {
+      left: 0;
+      width: 40%;
+      background: rgba(255, 0, 0, 0.3);
+    }
+    .center-zone {
+      left: 40%;
+      width: 20%;
+      background: rgba(0, 255, 0, 0.3);
+      font-size: 10px;
+    }
+    .right-zone {
+      left: 60%;
+      width: 40%;
+      background: rgba(0, 0, 255, 0.3);
+    }
+    #dataPanel {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(255,255,255,0.9);
+      padding: 5px 10px;
+      border-radius: 4px;
+      font-size: 14px;
+      z-index: 1000;
+    }
+    #dataPanel div { margin-bottom: 3px; }
+    #winMessage {
+      position: absolute;
+      top: 50%;
+      left:50%;
+      transform: translate(-50%, -50%);
+      font-size: 48px;
+      color: green;
+      background: rgba(255,255,255,0.9);
+      padding: 20px;
+      border-radius: 10px;
+      display: none;
+      z-index: 2000;
+    }
+    #player {
+      transition: transform 0.1s linear;
+    }
+  </style>
+</head>
+<body>
+  <div id="instructions">✊: stökk | ✌️: breyta þyngdarafli (bara með hreyfingu)</div>
+  <button id="webcamButton" style="position:fixed;top:60px;left:220px;z-index:1100;">Virkja vefmyndavél</button>
+  <div id="webcamContainer">
+    <video id="webcam" autoplay playsinline muted></video>
+    <canvas id="output_canvas"></canvas>
+    <div id="zoneOverlay">
+      <div class="zone left-zone">Vinstri</div>
+      <div class="zone center-zone">Stopp</div>
+      <div class="zone right-zone">Hægri</div>
+    </div>
+  </div>
+  <div id="dataPanel">
+    <div>Hreyfing: <span id="gesture_output"></span></div>
+    <div>X: <span id="x_output"></span></div>
+    <div>Y: <span id="y_output"></span></div>
+    <div>Stig: <span id="level_output"></span></div>
+    <div>Líf: <span id="lives_output"></span></div>
+  </div>
+  <div id="winMessage">Til hamingju! Þú hefur unnið!</div>
+  <svg id="game" viewBox="0 0 1600 400">
+    <defs>
+      <linearGradient id="bgGradient" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#87CEEB" />
+        <stop offset="100%" stop-color="#F0F8FF" />
+      </linearGradient>
+    </defs>
+    <rect x="0" y="0" width="1600" height="400" fill="url(#bgGradient)" />
+    <g id="gameScene">
+      <rect id="floor" x="0" y="350" width="1600" height="50" fill="#654321" />
+      <rect id="ceiling" x="0" y="0" width="1600" height="20" fill="#654321" />
+      <g id="platformsGroup"></g>
+      <g id="movingPlatformsGroup"></g>
+      <g id="wallsGroup"></g>
+      <g id="spikesGroup"></g>
+      <g id="starsGroup"></g>
+      <g id="doorGroup"></g>
+      <g id="player" transform="translate(50,320)">
+        <rect x="-10" y="-20" width="20" height="30" fill="blue" />
+        <circle cx="0" cy="-30" r="10" fill="blue" />
+        <circle cx="-3" cy="-33" r="1.5" fill="white" />
+        <circle cx="3" cy="-33" r="1.5" fill="white" />
+        <path d="M -4 -27 Q 0 -23 4 -27" stroke="white" stroke-width="1" fill="none" />
+      </g>
+    </g>
+  </svg>
+  <script type="module">
+    import { GestureRecognizer, FilesetResolver, DrawingUtils } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3';
+    let gestureRecognizer;
+    let runningMode = 'IMAGE';
+    let webcamRunning = false;
+    const videoWidth = 480;
+    const videoHeight = 360;
+    let currentLandmarks = null;
+    let currentGesture = "";
+    const createGestureRecognizer = async () => {
+      const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm');
+      gestureRecognizer = await GestureRecognizer.createFromOptions(vision, { baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task', delegate: 'GPU' }, runningMode: runningMode });
+    };
+    createGestureRecognizer();
+    const videoEl = document.getElementById('webcam');
+    const canvasElement = document.getElementById('output_canvas');
+    canvasElement.width = videoWidth;
+    canvasElement.height = videoHeight;
+    const canvasCtx = canvasElement.getContext('2d');
+    const gestureOutput = document.getElementById('gesture_output');
+    const xOutput = document.getElementById('x_output');
+    const yOutput = document.getElementById('y_output');
+    const enableWebcamButton = document.getElementById('webcamButton');
+    enableWebcamButton.addEventListener('click', enableCam);
+    function enableCam() {
+      if (!gestureRecognizer) {
+        alert('Vinsamlegast bíddu, líkanið er að hlaða.');
+        return;
+      }
+      if (!webcamRunning) {
+        webcamRunning = true;
+        enableWebcamButton.style.display = 'none';
+        const constraints = { video: { width: videoWidth, height: videoHeight } };
+        navigator.mediaDevices.getUserMedia(constraints).then(function (stream) {
+          videoEl.srcObject = stream;
+          videoEl.addEventListener('loadeddata', predictWebcam);
+        });
+      }
+    }
+    let lastVideoTime = -1;
+    async function predictWebcam() {
+      if (runningMode === 'IMAGE') {
+        runningMode = 'VIDEO';
+        await gestureRecognizer.setOptions({ runningMode: 'VIDEO' });
+      }
+      const nowInMs = Date.now();
+      if (videoEl.currentTime !== lastVideoTime) {
+        lastVideoTime = videoEl.currentTime;
+        const results = gestureRecognizer.recognizeForVideo(videoEl, nowInMs);
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        const drawingUtils = new DrawingUtils(canvasCtx);
+        if (results.landmarks) {
+          for (const landmarks of results.landmarks) {
+            drawingUtils.drawConnectors(landmarks, GestureRecognizer.HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 3 });
+            drawingUtils.drawLandmarks(landmarks, { color: '#FF0000', lineWidth: 1 });
+          }
+        }
+        canvasCtx.restore();
+        if (results.landmarks && results.landmarks.length > 0) {
+          currentLandmarks = results.landmarks[0];
+          xOutput.innerText = (currentLandmarks[0].x * 100).toFixed(2);
+          yOutput.innerText = (currentLandmarks[0].y * 100).toFixed(2);
+        } else {
+          currentLandmarks = null;
+        }
+        if (results.gestures.length > 0) {
+          currentGesture = results.gestures[0][0].categoryName.toLowerCase();
+          gestureOutput.innerText = currentGesture;
+        } else {
+          currentGesture = "";
+          gestureOutput.innerText = "";
+        }
+      }
+      if (webcamRunning) {
+        window.requestAnimationFrame(predictWebcam);
+      }
+    }
+    const levelOutput = document.getElementById('level_output');
+    const livesOutput = document.getElementById('lives_output');
+    const winMessage = document.getElementById('winMessage');
+    let playerPos = { x: 50, y: 320 };
+    let playerVel = { x: 0, y: 0 };
+    const gravityConst = 0.5;
+    let onGround = true;
+    let jumpCooldown = false;
+    let gravityDir = 1;
+    let currentLevel = 1;
+    const totalLevels = 3;
+    let lives = 3;
+    let platforms = [];
+    let movingPlatforms = [];
+    let walls = [];
+    let spikes = [];
+    let coins = [];
+    let door = null;
+    levelOutput.innerText = currentLevel;
+    livesOutput.innerText = lives;
+    function generateLevel(level) {
+      lives = 3;
+      livesOutput.innerText = lives;
+      platforms = [];
+      movingPlatforms = [];
+      walls = [];
+      spikes = [];
+      coins = [];
+      door = null;
+      document.getElementById('platformsGroup').innerHTML = "";
+      document.getElementById('movingPlatformsGroup').innerHTML = "";
+      document.getElementById('wallsGroup').innerHTML = "";
+      document.getElementById('spikesGroup').innerHTML = "";
+      document.getElementById('starsGroup').innerHTML = "";
+      document.getElementById('doorGroup').innerHTML = "";
+      const numPlatforms = Math.floor(Math.random() * 3) + 4;
+      for (let i = 0; i < numPlatforms; i++) {
+        let plat = {
+          x: Math.random() * 1200 + 100,
+          y: Math.random() * (300 - 100) + 100,
+          width: Math.random() * 100 + 100,
+          height: 20
+        };
+        platforms.push(plat);
+        let platEl = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        platEl.setAttribute("x", plat.x);
+        platEl.setAttribute("y", plat.y);
+        platEl.setAttribute("width", plat.width);
+        platEl.setAttribute("height", plat.height);
+        platEl.setAttribute("fill", "#888");
+        document.getElementById('platformsGroup').appendChild(platEl);
+        let coin = {
+          cx: plat.x + plat.width / 2,
+          cy: (gravityDir === 1) ? (plat.y - 8) : (plat.y + plat.height + 8),
+          r: 8
+        };
+        coins.push(coin);
+        let coinEl = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        coinEl.setAttribute("cx", coin.cx);
+        coinEl.setAttribute("cy", coin.cy);
+        coinEl.setAttribute("r", coin.r);
+        coinEl.setAttribute("fill", "yellow");
+        document.getElementById('starsGroup').appendChild(coinEl);
+        if (Math.random() < 0.3) {
+          let mp = {
+            id: 'mp' + i,
+            x: plat.x,
+            y: plat.y,
+            width: plat.width,
+            height: plat.height,
+            speed: 1 + Math.random(),
+            range: 50 + Math.random() * 50,
+            direction: 1,
+            initialX: plat.x,
+            axis: 'horizontal'
+          };
+          movingPlatforms.push(mp);
+          let mpEl = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          mpEl.setAttribute("x", mp.x);
+          mpEl.setAttribute("y", mp.y);
+          mpEl.setAttribute("width", mp.width);
+          mpEl.setAttribute("height", mp.height);
+          mpEl.setAttribute("fill", "#555");
+          mpEl.setAttribute("id", mp.id);
+          document.getElementById('movingPlatformsGroup').appendChild(mpEl);
+        }
+      }
+      const numWalls = Math.floor(Math.random() * 2) + 1;
+      for (let i = 0; i < numWalls; i++) {
+        let wall = {
+          x: Math.random() * 1400 + 100,
+          y: Math.random() * 200 + 100,
+          width: 20,
+          height: Math.random() * 100 + 100
+        };
+        if(wall.x + wall.width > 1600) wall.x = 1600 - wall.width;
+        walls.push(wall);
+        let wallEl = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        wallEl.setAttribute("x", wall.x);
+        wallEl.setAttribute("y", wall.y);
+        wallEl.setAttribute("width", wall.width);
+        wallEl.setAttribute("height", wall.height);
+        wallEl.setAttribute("fill", "brown");
+        document.getElementById('wallsGroup').appendChild(wallEl);
+      }
+      const numSpikes = Math.floor(Math.random() * 3) + 1;
+      for (let i = 0; i < numSpikes; i++) {
+        let spike = {
+          x: Math.random() * 1400 + 100,
+          y: (gravityDir === 1) ? 350 - 10 : 20,
+          width: 30,
+          height: 20
+        };
+        if(spike.x + spike.width > 1600) spike.x = 1600 - spike.width;
+        spikes.push(spike);
+        let spikeEl = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+        let points = `${spike.x},${spike.y + spike.height} ${spike.x + spike.width/2},${spike.y} ${spike.x + spike.width},${spike.y + spike.height}`;
+        spikeEl.setAttribute("points", points);
+        spikeEl.setAttribute("fill", "red");
+        document.getElementById('spikesGroup').appendChild(spikeEl);
+      }
+      let candidatePlats = platforms.filter(p => p.x > 150 && (p.x + p.width) < 1450);
+      let chosenPlat = candidatePlats.length ? candidatePlats[Math.floor(Math.random() * candidatePlats.length)] : platforms[0];
+      door = { width: 40, height: 70, surface: "floor" };
+      door.x = chosenPlat.x + chosenPlat.width - door.width;
+      door.y = chosenPlat.y - door.height;
+      if (door.x < 0) door.x = 0;
+      if (door.x + door.width > 1600) door.x = 1600 - door.width;
+      if (door.y < 0) door.y = 0;
+      if (door.y + door.height > 400) door.y = 400 - door.height;
+      let doorEl = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      doorEl.setAttribute("x", door.x);
+      doorEl.setAttribute("y", door.y);
+      doorEl.setAttribute("width", door.width);
+      doorEl.setAttribute("height", door.height);
+      doorEl.setAttribute("fill", "gray");
+      doorEl.setAttribute("id", "door");
+      document.getElementById('doorGroup').appendChild(doorEl);
+      playerPos = { x: 50, y: 320 };
+      playerVel = { x: 0, y: 0 };
+      onGround = true;
+    }
+    function updateMovingPlatforms() {
+      for (let mp of movingPlatforms) {
+        if (mp.axis === 'horizontal') {
+          mp.x += mp.speed * mp.direction;
+          if (mp.x > mp.initialX + mp.range || mp.x < mp.initialX - mp.range) {
+            mp.direction *= -1;
+          }
+          let el = document.getElementById(mp.id);
+          if (el) {
+            el.setAttribute("x", mp.x);
+          }
+        }
+      }
+    }
+    function checkObstacleCollisions() {
+      for (let wall of walls) {
+        if (playerPos.x + 20 > wall.x && playerPos.x - 20 < wall.x + wall.width &&
+            playerPos.y > wall.y && playerPos.y - 30 < wall.y + wall.height) {
+          loseLife();
+          return;
+        }
+      }
+      for (let spike of spikes) {
+        if (playerPos.x + 20 > spike.x && playerPos.x - 20 < spike.x + spike.width &&
+            playerPos.y > spike.y && playerPos.y - 30 < spike.y + spike.height) {
+          loseLife();
+          return;
+        }
+      }
+    }
+    function loseLife() {
+      lives--;
+      livesOutput.innerText = lives;
+      if (lives > 0) {
+        playerPos = { x: 50, y: (gravityDir === 1 ? 320 : 40) };
+        playerVel = { x: 0, y: 0 };
+        onGround = true;
+      } else {
+        alert("Þú hefur tapað öllum lífum. Endursetning stigsins.");
+        generateLevel(currentLevel);
+      }
+    }
+    function checkPlatformCollisions() {
+      const tolerance = 10;
+      const allPlats = platforms.concat(movingPlatforms);
+      for (let plat of allPlats) {
+        if (playerPos.x + 20 > plat.x && playerPos.x - 20 < plat.x + plat.width) {
+          if (gravityDir === 1 && playerVel.y > 0 &&
+              playerPos.y >= plat.y - tolerance && playerPos.y <= plat.y + tolerance) {
+            playerPos.y = plat.y;
+            playerVel.y = 0;
+            onGround = true;
+          }
+          if (gravityDir === -1 && playerVel.y < 0 &&
+              playerPos.y <= plat.y + plat.height + tolerance && playerPos.y >= plat.y + plat.height - tolerance) {
+            playerPos.y = plat.y + plat.height;
+            playerVel.y = 0;
+            onGround = true;
+          }
+        }
+      }
+    }
+    function updateDoorPosition() {
+      const doorEl = document.getElementById('door');
+      if (!doorEl || !door) return;
+      doorEl.setAttribute("x", door.x);
+      doorEl.setAttribute("y", door.y);
+    }
+    function nextLevel() {
+      currentLevel++;
+      if (currentLevel > totalLevels) {
+        winMessage.style.display = 'block';
+        return;
+      }
+      gravityDir = 1;
+      generateLevel(currentLevel);
+      levelOutput.innerText = currentLevel;
+    }
+    function checkCoinCollection() {
+      coins = coins.filter((coin, idx) => {
+        if (
+          playerPos.x < coin.cx + coin.r &&
+          playerPos.x + 20 > coin.cx - coin.r &&
+          playerPos.y < coin.cy + coin.r &&
+          playerPos.y + 20 > coin.cy - coin.r
+        ) {
+          const coinEls = document.getElementById("starsGroup").getElementsByTagName("circle");
+          if (coinEls[idx]) {
+            coinEls[idx].remove();
+          }
+          return false;
+        }
+        return true;
+      });
+    }
+    function gameLoop() {
+      updateMovingPlatforms();
+      checkObstacleCollisions();
+      checkPlatformCollisions();
+      checkCoinCollection();
+      const doorEl = document.getElementById('door');
+      if (coins.length === 0 && doorEl) {
+        doorEl.setAttribute("fill", "lime");
+      }
+      if (doorEl) {
+        const doorBox = doorEl.getBBox();
+        if (
+          playerPos.x + 20 > doorBox.x &&
+          playerPos.x - 20 < doorBox.x + doorBox.width &&
+          playerPos.y + 20 > doorBox.y &&
+          playerPos.y - 20 < doorBox.y + doorBox.height &&
+          coins.length === 0
+        ) {
+          if (currentGesture === "victory") {
+            nextLevel();
+            requestAnimationFrame(gameLoop);
+            return;
+          }
+        }
+      }
+      if (currentLandmarks) {
+        const handX = currentLandmarks[0].x * 100;
+        if (handX > 40 && handX < 60) {
+          playerVel.x = 0;
+        } else if (handX < 40) {
+          playerVel.x = 2;
+        } else if (handX > 60) {
+          playerVel.x = -2;
+        }
+      } else {
+        playerVel.x = 0;
+      }
+      if (currentGesture === "closed_fist" && onGround && !jumpCooldown) {
+        playerVel.y = -10;
+        onGround = false;
+        jumpCooldown = true;
+        setTimeout(() => { jumpCooldown = false; }, 500);
+      }
+      playerVel.y += gravityConst * gravityDir;
+      playerPos.x += playerVel.x;
+      playerPos.y += playerVel.y;
+      const groundY = (gravityDir === 1 ? 320 : 40);
+      if ((gravityDir === 1 && playerPos.y >= groundY) || (gravityDir === -1 && playerPos.y <= groundY)) {
+        playerPos.y = groundY;
+        playerVel.y = 0;
+        onGround = true;
+      }
+      if (playerPos.x < 20) playerPos.x = 20;
+      if (playerPos.x > 1600 - 20) playerPos.x = 1600 - 20;
+      const playerEl = document.getElementById('player');
+      if (gravityDir === 1) {
+        playerEl.setAttribute('transform', `translate(${playerPos.x},${playerPos.y})`);
+      } else {
+        playerEl.setAttribute('transform', `translate(${playerPos.x},${playerPos.y}) scale(1,-1)`);
+      }
+      requestAnimationFrame(gameLoop);
+    }
+    gameLoop();
+    let gravityCooldown = false;
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'KeyG' && !gravityCooldown) {
+        gravityDir *= -1;
+        playerVel.y = 0;
+        onGround = true;
+        updateDoorPosition();
+        gravityCooldown = true;
+        setTimeout(() => { gravityCooldown = false; }, 800);
+      }
+    });
+    setInterval(() => {
+      if (currentGesture === "victory" && !gravityCooldown) {
+        gravityDir *= -1;
+        playerVel.y = 0;
+        onGround = true;
+        updateDoorPosition();
+        gravityCooldown = true;
+        setTimeout(() => { gravityCooldown = false; }, 800);
+      }
+    }, 100);
+    generateLevel(currentLevel);
+  </script>
+</body>
+</html>
