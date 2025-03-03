@@ -1,5 +1,3 @@
-### Lýsing á geymslunni  
-
 Ég þróaði tvær útgáfur af leiknum vegna tæknilegra áskorana við útfærslu og óvissu um endanlegt útlit hans.  
 
 #### **Vefútgáfa (HTML)**  
@@ -11,5 +9,3 @@
 - **Tilraunaútgáfa**: Enn í þróun og ekki fullbúin.  
 - **Eðlisfræðikerfi virkar**: Þrátt fyrir að vera hrá, er grunnur leikjafisíkur rétt útfærður.  
 - **Spila**: [Tengill á Unity útgáfuna]  
-
-Geymslan inniheldur bæði stöðuga lausn og tilraunakennda útgáfu fyrir frekari þróun.
